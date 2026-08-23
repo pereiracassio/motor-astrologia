@@ -1,0 +1,59 @@
+from fastapi import FastAPI, Query
+import swisseph as swe
+from datetime import datetime, timedelta
+
+app = FastAPI()
+
+@app.get("/api")
+def calcular(
+    data: str = Query(..., description="Data no formato YYYY-MM-DD"),
+    hora: str = Query(..., description="Hora no formato HH:MM"),
+    fuso: float = Query(..., description="Fuso horário, ex: -3"),
+    lat: float = Query(0.0),
+    lon: float = Query(0.0)
+):
+    # Converte data/hora local para UTC
+    dt_local = datetime.strptime(f"{data} {hora}", "%Y-%m-%d %H:%M")
+    dt_utc = dt_local - timedelta(hours=fuso)
+    
+    # Dia Juliano em UT
+    hora_decimal = dt_utc.hour + (dt_utc.minute / 60.0) + (dt_utc.second / 3600.0)
+    jd = swe.julday(dt_utc.year, dt_utc.month, dt_utc.day, hora_decimal)
+    
+    # Os 7 planetas tradicionais
+    planetas = {
+        "Sol": swe.SUN,
+        "Lua": swe.MOON,
+        "Mercúrio": swe.MERCURY,
+        "Vênus": swe.VENUS,
+        "Marte": swe.MARS,
+        "Júpiter": swe.JUPITER,
+        "Saturno": swe.SATURN
+    }
+    
+    signos = [
+        "Áries", "Touro", "Gêmeos", "Câncer", 
+        "Leão", "Virgem", "Libra", "Escorpião", 
+        "Sagitário", "Capricórnio", "Aquário", "Peixes"
+    ]
+    
+    resultado = {}
+    for nome, pid in planetas.items():
+        pos, _ = swe.calc_ut(jd, pid)
+        longitude = pos[0]
+        velocidade = pos[3]
+        
+        signo_idx = int(longitude // 30)
+        grau_no_signo = longitude % 30
+        graus_int = int(grau_no_signo)
+        minutos = int((grau_no_signo - graus_int) * 60)
+        
+        resultado[nome] = {
+            "longitude_total": round(longitude, 4),
+            "signo": signos[signo_idx],
+            "grau": graus_int,
+            "minuto": minutos,
+            "retrogrado": velocidade < 0
+        }
+        
+    return resultado
