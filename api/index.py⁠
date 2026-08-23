@@ -34,17 +34,14 @@ def formatar_posicao(longitude, velocidade=0.0):
     }
 
 def buscar_sizigia_prenatal(jd_nascimento):
-    try:
-        jd_teste = jd_nascimento
-        for _ in range(60):
-            jd_teste -= 0.5
-            pos_sol, _ = swe.calc_ut(jd_teste, swe.SUN)
-            pos_lua, _ = swe.calc_ut(jd_teste, swe.MOON)
-            elongacao = (pos_lua[0] - pos_sol[0]) % 360
-            if elongacao < 5.0 or abs(elongacao - 180) < 5.0 or elongacao > 355.0:
-                return pos_lua[0]
-    except Exception:
-        pass
+    jd_teste = jd_nascimento
+    for _ in range(60):
+        jd_teste -= 0.5
+        pos_sol, _ = swe.calc_ut(jd_teste, swe.SUN)
+        pos_lua, _ = swe.calc_ut(jd_teste, swe.MOON)
+        elongacao = (pos_lua[0] - pos_sol[0]) % 360
+        if elongacao < 6.0 or abs(elongacao - 180) < 6.0 or elongacao > 354.0:
+            return pos_lua[0]
     return 0.0
 
 @app.get("/")
@@ -56,39 +53,33 @@ def calcular_mapa_completo(
     lat: float = Query(-23.5505),
     lon: float = Query(-46.6333)
 ):
-    try:
-        dt_local = datetime.strptime(f"{data} {hora}", "%Y-%m-%d %H:%M")
-        dt_utc = dt_local - timedelta(hours=fuso)
-        hora_decimal = dt_utc.hour + (dt_utc.minute / 60.0) + (dt_utc.second / 3600.0)
-        jd = swe.julday(dt_utc.year, dt_utc.month, dt_utc.day, hora_decimal)
+    dt_local = datetime.strptime(f"{data} {hora}", "%Y-%m-%d %H:%M")
+    dt_utc = dt_local - timedelta(hours=fuso)
+    hora_decimal = dt_utc.hour + (dt_utc.minute / 60.0) + (dt_utc.second / 3600.0)
+    jd = swe.julday(dt_utc.year, dt_utc.month, dt_utc.day, hora_decimal)
 
-        resultado = {}
+    resultado = {}
 
-        planetas = {
-            "Sol": swe.SUN, "Lua": swe.MOON, "Mercúrio": swe.MERCURY,
-            "Vênus": swe.VENUS, "Marte": swe.MARS, "Júpiter": swe.JUPITER, "Saturno": swe.SATURN
-        }
-        for nome, pid in planetas.items():
-            pos, _ = swe.calc_ut(jd, pid)
-            resultado[nome] = formatar_posicao(pos[0], pos[3])
+    # 1. Planetas Clássicos
+    planetas = {
+        "Sol": swe.SUN, "Lua": swe.MOON, "Mercúrio": swe.MERCURY,
+        "Vênus": swe.VENUS, "Marte": swe.MARS, "Júpiter": swe.JUPITER, "Saturno": swe.SATURN
+    }
+    for nome, pid in planetas.items():
+        pos, _ = swe.calc_ut(jd, pid)
+        resultado[nome] = formatar_posicao(pos[0], pos[3])
 
-        try:
-            cuspes, ascmc = swe.houses(jd, lat, lon, b'W')
-            resultado["Ascendente"] = formatar_posicao(ascmc[0])
-            resultado["MC"] = formatar_posicao(ascmc[1])
-        except Exception:
-            resultado["Ascendente"] = formatar_posicao(0.0)
-            resultado["MC"] = formatar_posicao(90.0)
+    # 2. Ângulos (Ascendente e MC)
+    cuspes, ascmc = swe.houses(jd, lat, lon, b'W')
+    resultado["Ascendente"] = formatar_posicao(ascmc[0])
+    resultado["MC"] = formatar_posicao(ascmc[1])
 
-        try:
-            pos_nodo, _ = swe.calc_ut(jd, swe.TRUE_NODE)
-            resultado["Nodo_Norte"] = formatar_posicao(pos_nodo[0], pos_nodo[3])
-        except Exception:
-            resultado["Nodo_Norte"] = formatar_posicao(0.0)
+    # 3. Nodo Norte
+    pos_nodo, _ = swe.calc_ut(jd, swe.TRUE_NODE)
+    resultado["Nodo_Norte"] = formatar_posicao(pos_nodo[0], pos_nodo[3])
 
-        pos_sizigia = buscar_sizigia_prenatal(jd)
-        resultado["Sizigia"] = formatar_posicao(pos_sizigia)
+    # 4. Sizígia Pré-Natal
+    pos_sizigia = buscar_sizigia_prenatal(jd)
+    resultado["Sizigia"] = formatar_posicao(pos_sizigia)
 
-        return resultado
-    except Exception as e:
-        return {"erro": str(e)}
+    return resultado
