@@ -1,26 +1,78 @@
 from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 import swisseph as swe
 from datetime import datetime, timedelta
 
 app = FastAPI()
 
+# Habilita o CORS para permitir que o Blogger consulte o motor sem bloqueios
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+SIGNOS = [
+    "Áries", "Touro", "Gêmeos", "Câncer", 
+    "Leão", "Virgem", "Libra", "Escorpião", 
+    "Sagitário", "Capricórnio", "Aquário", "Peixes"
+]
+
+def formatar_posicao(longitude, velocidade=0.0):
+    longitude = longitude % 360
+    signo_idx = int(longitude // 30)
+    grau_no_signo = longitude % 30
+    graus_int = int(grau_no_signo)
+    minutos = int((grau_no_signo - graus_int) * 60)
+    return {
+        "longitude_total": round(longitude, 4),
+        "signo": SIGNOS[signo_idx],
+        "grau": graus_int,
+        "minuto": minutos,
+        "retrogrado": velocidade < 0
+    }
+
+def buscar_sizigia_prenatal(jd_nascimento):
+    # Procura a Lua Nova (0°) ou Lua Cheia (180°) imediatamente anterior ao nascimento
+    jd_teste = jd_nascimento
+    for _ in range(120):  # Busca até 30 dias atrás em passos de 6h
+        jd_teste -= 0.25
+        pos_sol, _ = swe.calc_ut(jd_teste, swe.SUN)
+        pos_lua, _ = swe.calc_ut(jd_teste, swe.MOON)
+        elongacao = (pos_lua[0] - pos_sol[0]) % 360
+        
+        if elongacao < 3.0 or abs(elongacao - 180) < 3.0 or elongacao > 357.0:
+            # Refinamento minuto a minuto
+            jd_ref = jd_teste + 0.25
+            for _ in range(360):
+                jd_ref -= (1.0 / 1440.0)
+                s, _ = swe.calc_ut(jd_ref, swe.SUN)
+                l, _ = swe.calc_ut(jd_ref, swe.MOON)
+                e = (l[0] - s[0]) % 360
+                if e < 0.1 or abs(e - 180) < 0.1 or e > 359.9:
+                    return l[0]
+    return 0.0
+
+@app.get("/")
 @app.get("/api")
-def calcular(
-    data: str = Query(..., description="Data no formato YYYY-MM-DD"),
-    hora: str = Query(..., description="Hora no formato HH:MM"),
-    fuso: float = Query(..., description="Fuso horário, ex: -3"),
-    lat: float = Query(0.0),
-    lon: float = Query(0.0)
+def calcular_mapa_completo(
+    data: str = Query("1989-10-09"),
+    hora: str = Query("10:59"),
+    fuso: float = Query(-3.0),
+    lat: float = Query(-23.5505),
+    lon: float = Query(-46.6333)
 ):
-    # Converte data/hora local para UTC
+    # 1. Conversão de Data/Hora Local para UTC e Juliano
     dt_local = datetime.strptime(f"{data} {hora}", "%Y-%m-%d %H:%M")
     dt_utc = dt_local - timedelta(hours=fuso)
-    
-    # Dia Juliano em UT
     hora_decimal = dt_utc.hour + (dt_utc.minute / 60.0) + (dt_utc.second / 3600.0)
     jd = swe.julday(dt_utc.year, dt_utc.month, dt_utc.day, hora_decimal)
-    
-    # Os 7 planetas tradicionais
+
+    resultado = {}
+
+    # 2. Cálculo dos 7 Planetas Clássicos
     planetas = {
         "Sol": swe.SUN,
         "Lua": swe.MOON,
@@ -31,32 +83,22 @@ def calcular(
         "Saturno": swe.SATURN
     }
     
-    signos = [
-        "Áries", "Touro", "Gêmeos", "Câncer", 
-        "Leão", "Virgem", "Libra", "Escorpião", 
-        "Sagitário", "Capricórnio", "Aquário", "Peixes"
-    ]
-    
-    resultado = {}
     for nome, pid in planetas.items():
         pos, _ = swe.calc_ut(jd, pid)
-        longitude = pos[0]
-        velocidade = pos[3]
-        
-        signo_idx = int(longitude // 30)
-        grau_no_signo = longitude % 30
-        graus_int = int(grau_no_signo)
-        minutos = int((grau_no_signo - graus_int) * 60)
-        
-        resultado[nome] = {
-            "longitude_total": round(longitude, 4),
-            "signo": signos[signo_idx],
-            "grau": graus_int,
-            "minuto": minutos,
-            "retrogrado": velocidade < 0
-        }    
-        
-        from fastapi.responses import HTMLResponse
-    import json
-    return HTMLResponse(content=f"<pre>{json.dumps(resultado, ensure_ascii=False, indent=2)}</pre>")
+        resultado[nome] = formatar_posicao(pos[0], pos[3])
 
+    # 3. Cálculo de Ascendente e Meio do Céu (MC)
+    # Usamos sistema 'W' (Whole Sign / Casas por Signos Inteiros)
+    cuspes, ascmc = swe.houses(jd, lat, lon, b'W')
+    resultado["Ascendente"] = formatar_posicao(ascmc[0])
+    resultado["MC"] = formatar_posicao(ascmc[1])
+
+    # 4. Cálculo do Nodo Norte
+    pos_nodo, _ = swe.calc_ut(jd, swe.TRUE_NODE)
+    resultado["Nodo_Norte"] = formatar_posicao(pos_nodo[0], pos_nodo[3])
+
+    # 5. Cálculo da Sizígia Pré-Natal
+    pos_sizigia = buscar_sizigia_prenatal(jd)
+    resultado["Sizigia"] = formatar_posicao(pos_sizigia)
+
+    return resultado
