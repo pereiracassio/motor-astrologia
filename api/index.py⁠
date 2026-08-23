@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 
 app = FastAPI()
 
-# Habilita o CORS para permitir que o Blogger consulte o motor sem bloqueios
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,7 +20,7 @@ SIGNOS = [
 ]
 
 def formatar_posicao(longitude, velocidade=0.0):
-    longitude = longitude % 360
+    longitude = float(longitude) % 360
     signo_idx = int(longitude // 30)
     grau_no_signo = longitude % 30
     graus_int = int(grau_no_signo)
@@ -35,24 +34,17 @@ def formatar_posicao(longitude, velocidade=0.0):
     }
 
 def buscar_sizigia_prenatal(jd_nascimento):
-    # Procura a Lua Nova (0°) ou Lua Cheia (180°) imediatamente anterior ao nascimento
-    jd_teste = jd_nascimento
-    for _ in range(120):  # Busca até 30 dias atrás em passos de 6h
-        jd_teste -= 0.25
-        pos_sol, _ = swe.calc_ut(jd_teste, swe.SUN)
-        pos_lua, _ = swe.calc_ut(jd_teste, swe.MOON)
-        elongacao = (pos_lua[0] - pos_sol[0]) % 360
-        
-        if elongacao < 3.0 or abs(elongacao - 180) < 3.0 or elongacao > 357.0:
-            # Refinamento minuto a minuto
-            jd_ref = jd_teste + 0.25
-            for _ in range(360):
-                jd_ref -= (1.0 / 1440.0)
-                s, _ = swe.calc_ut(jd_ref, swe.SUN)
-                l, _ = swe.calc_ut(jd_ref, swe.MOON)
-                e = (l[0] - s[0]) % 360
-                if e < 0.1 or abs(e - 180) < 0.1 or e > 359.9:
-                    return l[0]
+    try:
+        jd_teste = jd_nascimento
+        for _ in range(60):
+            jd_teste -= 0.5
+            pos_sol, _ = swe.calc_ut(jd_teste, swe.SUN)
+            pos_lua, _ = swe.calc_ut(jd_teste, swe.MOON)
+            elongacao = (pos_lua[0] - pos_sol[0]) % 360
+            if elongacao < 5.0 or abs(elongacao - 180) < 5.0 or elongacao > 355.0:
+                return pos_lua[0]
+    except Exception:
+        pass
     return 0.0
 
 @app.get("/")
@@ -64,41 +56,39 @@ def calcular_mapa_completo(
     lat: float = Query(-23.5505),
     lon: float = Query(-46.6333)
 ):
-    # 1. Conversão de Data/Hora Local para UTC e Juliano
-    dt_local = datetime.strptime(f"{data} {hora}", "%Y-%m-%d %H:%M")
-    dt_utc = dt_local - timedelta(hours=fuso)
-    hora_decimal = dt_utc.hour + (dt_utc.minute / 60.0) + (dt_utc.second / 3600.0)
-    jd = swe.julday(dt_utc.year, dt_utc.month, dt_utc.day, hora_decimal)
+    try:
+        dt_local = datetime.strptime(f"{data} {hora}", "%Y-%m-%d %H:%M")
+        dt_utc = dt_local - timedelta(hours=fuso)
+        hora_decimal = dt_utc.hour + (dt_utc.minute / 60.0) + (dt_utc.second / 3600.0)
+        jd = swe.julday(dt_utc.year, dt_utc.month, dt_utc.day, hora_decimal)
 
-    resultado = {}
+        resultado = {}
 
-    # 2. Cálculo dos 7 Planetas Clássicos
-    planetas = {
-        "Sol": swe.SUN,
-        "Lua": swe.MOON,
-        "Mercúrio": swe.MERCURY,
-        "Vênus": swe.VENUS,
-        "Marte": swe.MARS,
-        "Júpiter": swe.JUPITER,
-        "Saturno": swe.SATURN
-    }
-    
-    for nome, pid in planetas.items():
-        pos, _ = swe.calc_ut(jd, pid)
-        resultado[nome] = formatar_posicao(pos[0], pos[3])
+        planetas = {
+            "Sol": swe.SUN, "Lua": swe.MOON, "Mercúrio": swe.MERCURY,
+            "Vênus": swe.VENUS, "Marte": swe.MARS, "Júpiter": swe.JUPITER, "Saturno": swe.SATURN
+        }
+        for nome, pid in planetas.items():
+            pos, _ = swe.calc_ut(jd, pid)
+            resultado[nome] = formatar_posicao(pos[0], pos[3])
 
-    # 3. Cálculo de Ascendente e Meio do Céu (MC)
-    # Usamos sistema 'W' (Whole Sign / Casas por Signos Inteiros)
-    cuspes, ascmc = swe.houses(jd, lat, lon, b'W')
-    resultado["Ascendente"] = formatar_posicao(ascmc[0])
-    resultado["MC"] = formatar_posicao(ascmc[1])
+        try:
+            cuspes, ascmc = swe.houses(jd, lat, lon, b'W')
+            resultado["Ascendente"] = formatar_posicao(ascmc[0])
+            resultado["MC"] = formatar_posicao(ascmc[1])
+        except Exception:
+            resultado["Ascendente"] = formatar_posicao(0.0)
+            resultado["MC"] = formatar_posicao(90.0)
 
-    # 4. Cálculo do Nodo Norte
-    pos_nodo, _ = swe.calc_ut(jd, swe.TRUE_NODE)
-    resultado["Nodo_Norte"] = formatar_posicao(pos_nodo[0], pos_nodo[3])
+        try:
+            pos_nodo, _ = swe.calc_ut(jd, swe.TRUE_NODE)
+            resultado["Nodo_Norte"] = formatar_posicao(pos_nodo[0], pos_nodo[3])
+        except Exception:
+            resultado["Nodo_Norte"] = formatar_posicao(0.0)
 
-    # 5. Cálculo da Sizígia Pré-Natal
-    pos_sizigia = buscar_sizigia_prenatal(jd)
-    resultado["Sizigia"] = formatar_posicao(pos_sizigia)
+        pos_sizigia = buscar_sizigia_prenatal(jd)
+        resultado["Sizigia"] = formatar_posicao(pos_sizigia)
 
-    return resultado
+        return resultado
+    except Exception as e:
+        return {"erro": str(e)}
