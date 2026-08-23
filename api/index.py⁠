@@ -54,6 +54,9 @@ def calcular(
             "grau": graus_int,
             "minuto": minutos,
             "retrogrado": velocidade < 0
-        }
+        }    
         
-    return resultado
+        from fastapi.responses import HTMLResponse
+    import json
+    return HTMLResponse(content=f"<pre>{json.dumps(resultado, ensure_ascii=False, indent=2)}</pre>")
+
