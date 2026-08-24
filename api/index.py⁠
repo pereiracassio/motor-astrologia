@@ -5,13 +5,18 @@ from datetime import datetime, timedelta
 
 app = FastAPI()
 
+# Liberação completa de CORS com suporte explícito ao preflight (OPTIONS) do Safari/iOS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+@app.options("/{full_path:path}")
+def options_handler(full_path: str):
+    return {}
 
 SIGNOS = [
     "Áries", "Touro", "Gêmeos", "Câncer", 
