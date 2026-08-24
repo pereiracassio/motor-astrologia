@@ -1,6 +1,7 @@
-from urllib.parse import parse_qs
-import json
+from flask import Flask, request, jsonify
 import swisseph as swe
+
+app = Flask(__name__)
 
 PLANETAS = {
     "Sol": swe.SUN,
@@ -28,13 +29,7 @@ def signo_da_posicao(grau_absoluto):
     return SIGNOS[indice_signo], round(grau_no_signo, 2)
 
 
-def calcular_mapa(query):
-    data = query.get("data", [""])[0]
-    hora = query.get("hora", [""])[0]
-    lat = float(query.get("lat", ["0"])[0])
-    lon = float(query.get("lon", ["0"])[0])
-    fuso = float(query.get("fuso", ["0"])[0])
-
+def calcular_mapa(data, hora, lat, lon, fuso):
     ano, mes, dia = [int(x) for x in data.split("-")]
     h, m = [int(x) for x in hora.split(":")]
     hora_decimal = h + (m / 60.0)
@@ -77,33 +72,28 @@ def calcular_mapa(query):
     }
 
 
-def _wsgi_app(environ, start_response):
-    metodo = environ.get('REQUEST_METHOD', 'GET')
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
 
-    headers_cors = [
-        ('Access-Control-Allow-Origin', '*'),
-        ('Access-Control-Allow-Methods', 'GET, OPTIONS'),
-        ('Access-Control-Allow-Headers', 'Content-Type'),
-    ]
 
-    if metodo == 'OPTIONS':
-        start_response('204 No Content', headers_cors)
-        return [b'']
-
-    query_string = environ.get('QUERY_STRING', '')
-    query = parse_qs(query_string)
+@app.route('/api/index', methods=['GET', 'OPTIONS'])
+def index():
+    if request.method == 'OPTIONS':
+        return '', 204
 
     try:
-        resultado = calcular_mapa(query)
-        status = '200 OK'
+        data = request.args.get('data', '')
+        hora = request.args.get('hora', '')
+        lat = float(request.args.get('lat', '0'))
+        lon = float(request.args.get('lon', '0'))
+        fuso = float(request.args.get('fuso', '0'))
+
+        resultado = calcular_mapa(data, hora, lat, lon, fuso)
+        return jsonify(resultado), 200
+
     except Exception as e:
-        resultado = {"sucesso": False, "erro": str(e)}
-        status = '400 Bad Request'
-
-    corpo = json.dumps(resultado, ensure_ascii=False).encode('utf-8')
-    headers = [('Content-Type', 'application/json; charset=utf-8')] + headers_cors
-    start_response(status, headers)
-    return [corpo]
-
-
-app = _wsgi_app
+        return jsonify({"sucesso": False, "erro": str(e)}), 400
