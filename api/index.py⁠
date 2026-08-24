@@ -1,114 +1,118 @@
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+import json
 import swisseph as swe
 
+# Nomes dos planetas que vamos calcular
+PLANETAS = {
+    "Sol": swe.SUN,
+    "Lua": swe.MOON,
+    "Mercurio": swe.MERCURY,
+    "Venus": swe.VENUS,
+    "Marte": swe.MARS,
+    "Jupiter": swe.JUPITER,
+    "Saturno": swe.SATURN,
+    "Urano": swe.URANUS,
+    "Netuno": swe.NEPTUNE,
+    "Plutao": swe.PLUTO,
+    "NodoNorte": swe.MEAN_NODE,
+}
+
 SIGNOS = [
-    "Áries", "Touro", "Gêmeos", "Câncer",
-    "Leão", "Virgem", "Libra", "Escorpião",
-    "Sagitário", "Capricórnio", "Aquário", "Peixes"
+    "Aries", "Touro", "Gemeos", "Cancer", "Leao", "Virgem",
+    "Libra", "Escorpiao", "Sagitario", "Capricornio", "Aquario", "Peixes"
 ]
 
-def extrair_posicao(long_graus):
-    pos = long_graus % 360
-    idx_signo = int(pos // 30)
-    resto = pos % 30
-    grau = int(resto)
-    minuto = int((resto - grau) * 60)
-    return SIGNOS[idx_signo], grau, minuto
+
+def signo_da_posicao(grau_absoluto):
+    """Recebe grau de 0 a 360 e devolve o signo + grau dentro do signo."""
+    indice_signo = int(grau_absoluto // 30)
+    grau_no_signo = grau_absoluto % 30
+    return SIGNOS[indice_signo], round(grau_no_signo, 2)
+
 
 class handler(BaseHTTPRequestHandler):
+
+    def _cors_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+
+    def do_OPTIONS(self):
+        # Necessário para o navegador não bloquear a chamada vinda do GitHub Pages
+        self.send_response(204)
+        self._cors_headers()
+        self.end_headers()
+
     def do_GET(self):
         query = parse_qs(urlparse(self.path).query)
 
-        data_str = query.get('data', ['1989-10-09'])[0]
-        hora_str = query.get('hora', ['10:59'])[0]
-        fuso_str = query.get('fuso', ['-3'])[0]
-        lat_str = query.get('lat', ['-23.5505'])[0]
-        lon_str = query.get('lon', ['-46.6333'])[0]
-
-        linhas_tabela = ""
-
         try:
-            ano, mes, dia = map(int, data_str.split('-'))
-            hora, minuto = map(int, hora_str.split(':'))
-            fuso = float(fuso_str)
-            lat = float(lat_str)
-            lon = float(lon_str)
+            data = query.get("data", [""])[0]       # formato: 2026-08-24
+            hora = query.get("hora", [""])[0]        # formato: 14:30
+            lat = float(query.get("lat", ["0"])[0])
+            lon = float(query.get("lon", ["0"])[0])
+            fuso = float(query.get("fuso", ["0"])[0])  # ex: -3 para Brasília
 
-            hora_utc = (hora + (minuto / 60.0)) - fuso
-            jd_ut = swe.julday(ano, mes, dia, hora_utc)
+            ano, mes, dia = [int(x) for x in data.split("-")]
+            h, m = [int(x) for x in hora.split(":")]
+            hora_decimal = h + (m / 60.0)
 
+            # Converte hora local para hora universal (UT), descontando o fuso
+            hora_ut = hora_decimal - fuso
+
+            jd_ut = swe.julday(ano, mes, dia, hora_ut)
+
+            # FLG_MOSEPH: usa o modelo interno de cálculo, sem precisar
+            # baixar arquivos extras de efemérides
+            flags = swe.FLG_MOSEPH
+
+            planetas_resultado = {}
+            for nome, codigo in PLANETAS.items():
+                posicao, _ = swe.calc_ut(jd_ut, codigo, flags)
+                grau_absoluto = posicao[0]
+                signo, grau_no_signo = signo_da_posicao(grau_absoluto)
+                planetas_resultado[nome] = {
+                    "grau_absoluto": round(grau_absoluto, 2),
+                    "signo": signo,
+                    "grau_no_signo": grau_no_signo,
+                    "retrogrado": posicao[3] < 0
+                }
+
+            # Casas astrológicas (sistema Placidus)
             cusps, ascmc = swe.houses(jd_ut, lat, lon, b'P')
+            casas_resultado = {}
+            for i, grau_absoluto in enumerate(cusps, start=1):
+                signo, grau_no_signo = signo_da_posicao(grau_absoluto)
+                casas_resultado[f"Casa{i}"] = {
+                    "grau_absoluto": round(grau_absoluto, 2),
+                    "signo": signo,
+                    "grau_no_signo": grau_no_signo
+                }
 
-            corpos = [
-                ("Ascendente (ASC)", ascmc[0], True),
-                ("Meio do Céu (MC)", ascmc[1], True),
-                ("Sol", swe.SE_SUN, False),
-                ("Lua", swe.SE_MOON, False),
-                ("Mercúrio", swe.SE_MERCURY, False),
-                ("Vênus", swe.SE_VENUS, False),
-                ("Marte", swe.SE_MARS, False),
-                ("Júpiter", swe.SE_JUPITER, False),
-                ("Saturno", swe.SE_SATURN, False),
-                ("Nodo Norte", swe.SE_TRUE_NODE, False)
-            ]
+            ascendente_signo, ascendente_grau = signo_da_posicao(ascmc[0])
+            meio_ceu_signo, meio_ceu_grau = signo_da_posicao(ascmc[1])
 
-            for rotulo, p_id, eh_angulo in corpos:
-                if eh_angulo:
-                    long_g = p_id
-                    retro = False
-                else:
-                    res, _ = swe.calc_ut(jd_ut, p_id, swe.FLG_SWIEPH | swe.FLG_SPEED)
-                    long_g = res[0]
-                    retro = res[3] < 0
+            resultado = {
+                "sucesso": True,
+                "planetas": planetas_resultado,
+                "casas": casas_resultado,
+                "ascendente": {"signo": ascendente_signo, "grau": ascendente_grau},
+                "meio_ceu": {"signo": meio_ceu_signo, "grau": meio_ceu_grau}
+            }
 
-                signo, grau, min_arc = extrair_posicao(long_g)
-                str_retro = " (R)" if retro else ""
-                linhas_tabela += f"<tr><td style='color:#103b70;'>{rotulo}</td><td>{signo}</td><td>{grau}° {min_arc}′{str_retro}</td></tr>"
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self._cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps(resultado, ensure_ascii=False).encode('utf-8'))
 
         except Exception as e:
-            linhas_tabela = f"<tr><td colspan='3' style='color:red;'>Erro ao calcular: {str(e)}</td></tr>"
+            erro = {"sucesso": False, "erro": str(e)}
+            self.send_response(400)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self._cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps(erro, ensure_ascii=False).encode('utf-8'))
 
-        html_resposta = f"""<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Resultado Astrológico</title>
-    <style>
-        body {{ font-family: -apple-system, sans-serif; padding: 15px; background: #f8fafc; color: #0f172a; }}
-        .card {{ background: #ffffff; padding: 16px; border: 2px solid #d4af37; border-radius: 10px; max-width: 650px; margin-bottom: 15px; }}
-        table {{ width: 100%; max-width: 650px; border-collapse: collapse; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }}
-        th {{ background: #103b70; color: #ffffff; text-align: left; padding: 8px; font-size: 11px; text-transform: uppercase; }}
-        td {{ padding: 8px; border-bottom: 1px solid #e2e8f0; font-size: 12px; font-weight: 600; }}
-        .btn-voltar {{ display: inline-block; margin-top: 15px; padding: 10px 15px; background: #103b70; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 12px; }}
-    </style>
-</head>
-<body>
-    <h3 style="color: #103b70;">Resultado - Swiss Ephemeris</h3>
-    <div class="card">
-        <p style="font-size: 12px; margin: 0;"><b>Data:</b> {data_str} | <b>Hora:</b> {hora_str} | <b>Fuso:</b> UTC {fuso_str}</p>
-        <p style="font-size: 12px; margin: 5px 0 0 0;"><b>Lat:</b> {lat_str} | <b>Lon:</b> {lon_str}</p>
-    </div>
-    <table>
-        <thead>
-            <tr>
-                <th>Ponto / Planeta</th>
-                <th>Signo</th>
-                <th>Grau / Minuto</th>
-            </tr>
-        </thead>
-        <tbody>
-            {linhas_tabela}
-        </tbody>
-    </table>
-    <a href="javascript:history.back()" class="btn-voltar">← Voltar para a Consulta</a>
-</body>
-</html>"""
-
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/html; charset=utf-8')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(html_resposta.encode('utf-8'))
         return
