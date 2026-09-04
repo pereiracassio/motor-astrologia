@@ -140,6 +140,7 @@ def calcular_revolucao_solar(data_nasc, hora_nasc, lat_nasc, lon_nasc, fuso_nasc
                               ano_alvo, lat_sr, lon_sr, fuso_sr):
     jd_natal, ano_nasc, mes_nasc, dia_nasc = calcular_jd_ut(data_nasc, hora_nasc, fuso_nasc)
     sol_natal = longitude_corpo(jd_natal, swe.SUN)
+    sizigia = sizigia_pre_natal(jd_natal)
 
     jd_inicio_busca = swe.julday(ano_alvo, mes_nasc, dia_nasc, 0) - 2
     jd_retorno = swe.solcross_ut(sol_natal, jd_inicio_busca, swe.FLG_MOSEPH)
@@ -161,7 +162,8 @@ def calcular_revolucao_solar(data_nasc, hora_nasc, lat_nasc, lon_nasc, fuso_nasc
         "planetas": planetas_resultado,
         "casas": casas_resultado,
         "ascendente": ascendente,
-        "meio_ceu": meio_ceu
+        "meio_ceu": meio_ceu,
+        "sizigia": sizigia
     }
 
 
